@@ -56,9 +56,16 @@ jobs:
       # We only need to install the specific NDK version and platform.
       - name: Install Android NDK and platform
         run: |
+          # sdkmanager is not in PATH by default; find it via ANDROID_SDK_ROOT
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then
+            # Fallback: older runners may put it in a different slot
+            SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager | head -1)
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
           # Accept licenses non-interactively
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install \
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" \
             "ndk;${{ env.ANDROID_NDK_VERSION }}" \
             "platforms;android-${{ env.ANDROID_API_LEVEL }}" \
             "build-tools;${{ env.ANDROID_BUILD_TOOLS }}"
