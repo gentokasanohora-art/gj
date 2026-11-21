@@ -52,11 +52,12 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # Android SDK is pre-installed on GitHub-hosted ubuntu runners.
+      # We only need to install the specific NDK version and platform.
       - name: Install Android NDK and platform
         run: |
+          # Accept licenses non-interactively
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --install \
             "ndk;${{ env.ANDROID_NDK_VERSION }}" \
             "platforms;android-${{ env.ANDROID_API_LEVEL }}" \
