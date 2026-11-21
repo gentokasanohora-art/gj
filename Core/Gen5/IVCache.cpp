@@ -1,0 +1,276 @@
+/*
+ * This file is part of PokéFinder
+ * Copyright (C) 2017-2024 by Admiral_Fish, bumba, and EzPzStreamz
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 3
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ */
+
+#include "IVCache.hpp"
+#include <Core/Enum/Game.hpp>
+#include <Core/Gen5/StaticTemplate5.hpp>
+#include <Core/Parents/Filters/StateFilter.hpp>
+#include <Core/RNG/MT.hpp>
+#include <Core/Util/Utilities.hpp>
+#include <fstream>
+#include <numeric>
+#include <variant>
+
+struct SeedCache
+{
+    std::array<u16, 10> entralinkCount;
+    std::array<u16, 10> normalCount;
+    std::array<u16, 6> roamerCount;
+    u32 seeds[];
+};
+static_assert(sizeof(SeedCache) == 52);
+
+static std::array<u8, 6> computeIVs(u32 seed, u32 advance, CacheType type)
+{
+    std::array<u8, 6> ivs;
+
+    if (type == CacheType::Entralink)
+    {
+        advance += 22;
+    }
+    else if (type == CacheType::Roamer)
+    {
+        advance += 1;
+    }
+
+    using MTVariant = std::variant<MTFast, MT>;
+    MTVariant mtVariant = [&]() {
+        u32 size = advance + 6;
+        if (size < 227)
+        {
+            return MTVariant(std::in_place_type<MTFast>, seed, advance, size, true);
+        }
+        else
+        {
+            return MTVariant(std::in_place_type<MT>, seed, advance);
+        }
+    }();
+
+    std::visit(
+        [&]<typename T>(T &mt) {
+            constexpr bool fast = std::is_same_v<T, MTFast>;
+            constexpr int shift = fast ? 0 : 27;
+
+            ivs[0] = mt.next() >> shift;
+            ivs[1] = mt.next() >> shift;
+            ivs[2] = mt.next() >> shift;
+
+            if (type == CacheType::Roamer)
+            {
+                ivs[4] = mt.next() >> shift;
+                ivs[5] = mt.next() >> shift;
+                ivs[3] = mt.next() >> shift;
+            }
+            else
+            {
+                ivs[3] = mt.next() >> shift;
+                ivs[4] = mt.next() >> shift;
+                ivs[5] = mt.next() >> shift;
+            }
+        },
+        mtVariant);
+
+    return ivs;
+}
+
+IVCache::IVCache(std::string_view file, bool read) : valid(false)
+{
+    std::ifstream stream(file.data(), std::ios_base::in | std::ios_base::binary);
+    if (stream.is_open())
+    {
+        u32 magic;
+
+        // Expected magic word is CRC32 of "IVCache"
+        stream.read(reinterpret_cast<char *>(&magic), sizeof(magic));
+        if (magic != 0xd08cb7c0)
+        {
+            return;
+        }
+
+        stream.read(reinterpret_cast<char *>(&initialAdvances), sizeof(initialAdvances));
+        stream.read(reinterpret_cast<char *>(&maxAdvances), sizeof(maxAdvances));
+
+        if (read)
+        {
+            std::vector<u32> entralinkCount(maxAdvances + 5);
+            std::vector<u32> normalCount(maxAdvances + 5);
+            std::vector<u32> roamerCount(maxAdvances + 1);
+
+            stream.read(reinterpret_cast<char *>(entralinkCount.data()), entralinkCount.size() * sizeof(u32));
+            stream.read(reinterpret_cast<char *>(normalCount.data()), normalCount.size() * sizeof(u32));
+            stream.read(reinterpret_cast<char *>(roamerCount.data()), roamerCount.size() * sizeof(u32));
+
+            entralinkSeeds.resize(entralinkCount.size());
+            for (int i = 0; i < entralinkCount.size(); i++)
+            {
+                entralinkSeeds[i].resize(entralinkCount[i]);
+                stream.read(reinterpret_cast<char *>(entralinkSeeds[i].data()), entralinkCount[i] * sizeof(u32));
+            }
+
+            normalSeeds.resize(normalCount.size());
+            for (int i = 0; i < normalCount.size(); i++)
+            {
+                normalSeeds[i].resize(normalCount[i]);
+                stream.read(reinterpret_cast<char *>(normalSeeds[i].data()), normalCount[i] * sizeof(u32));
+            }
+
+            roamerSeeds.resize(roamerCount.size());
+            for (int i = 0; i < roamerCount.size(); i++)
+            {
+                roamerSeeds[i].resize(roamerCount[i]);
+                stream.read(reinterpret_cast<char *>(roamerSeeds[i].data()), roamerCount[i] * sizeof(u32));
+            }
+        }
+
+        valid = true;
+    }
+}
+
+fph::MetaFphMap<u64, std::array<u8, 6>> IVCache::getCache(u32 initialAdvances, u32 maxAdvances, Game version, bool passPower,
+                                                          CacheType type, const StaticTemplate5 *staticTemplate,
+                                                          const StateFilter &filter) const
+{
+    if (type == CacheType::Entralink)
+    {
+        return getEntralinkCache(initialAdvances, maxAdvances, filter);
+    }
+    else if (type == CacheType::Normal)
+    {
+        return getNormalCache(initialAdvances, maxAdvances, version, passPower, staticTemplate, filter);
+    }
+    else
+    {
+        return getRoamerCache(initialAdvances, maxAdvances, filter);
+    }
+}
+
+std::vector<u32> IVCache::getSeeds(Game version, CacheType type) const
+{
+    std::vector<u32> seeds;
+    if (type == CacheType::Entralink)
+    {
+        for (int i = 0; i < entralinkSeeds.size(); i++)
+        {
+            seeds.insert(seeds.end(), entralinkSeeds[i].begin(), entralinkSeeds[i].end());
+        }
+    }
+    else if (type == CacheType::Normal)
+    {
+        int start = (version & Game::BW) != Game::None ? 0 : 2;
+        int end = (version & Game::BW) != Game::None ? normalSeeds.size() - 2 : normalSeeds.size();
+        for (int i = start; i < end; i++)
+        {
+            seeds.insert(seeds.end(), normalSeeds[i].begin(), normalSeeds[i].end());
+        }
+    }
+    else
+    {
+        for (int i = 0; i < roamerSeeds.size(); i++)
+        {
+            seeds.insert(seeds.end(), roamerSeeds[i].begin(), roamerSeeds[i].end());
+        }
+    }
+
+    std::ranges::sort(seeds);
+    seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
+
+    return seeds;
+}
+
+bool IVCache::isValid() const
+{
+    return valid;
+}
+
+fph::MetaFphMap<u64, std::array<u8, 6>> IVCache::getEntralinkCache(u32 initialAdvances, u32 maxAdvances, const StateFilter &filter) const
+{
+    fph::MetaFphMap<u64, std::array<u8, 6>> cache;
+
+    for (u64 i = initialAdvances; i <= (initialAdvances + maxAdvances) && i < entralinkSeeds.size(); i++)
+    {
+        for (u32 seed : entralinkSeeds[i])
+        {
+            auto ivs = computeIVs(seed, i, CacheType::Entralink);
+            if (filter.compareIV(ivs) && filter.compareHiddenPower(ivs))
+            {
+                cache.emplace((i << 32) | seed, ivs);
+            }
+        }
+    }
+
+    cache.max_load_factor(0.9);
+    cache.rehash(cache.size());
+
+    return cache;
+}
+
+fph::MetaFphMap<u64, std::array<u8, 6>> IVCache::getNormalCache(u32 initialAdvances, u32 maxAdvances, Game version, bool passPower,
+                                                                const StaticTemplate5 *staticTemplate, const StateFilter &filter) const
+{
+    fph::MetaFphMap<u64, std::array<u8, 6>> cache;
+
+    int offset = (staticTemplate && staticTemplate->getEgg()) ? 1 : 0;
+    if ((version & Game::BW2) != Game::None)
+    {
+        offset += 2;
+        if (passPower && (staticTemplate == nullptr || staticTemplate->getWild()))
+        {
+            offset += 2;
+        }
+    }
+
+    for (u64 i = initialAdvances; i <= (initialAdvances + maxAdvances) && (i + offset) < normalSeeds.size(); i++)
+    {
+        for (u32 seed : normalSeeds[i + offset])
+        {
+            auto ivs = computeIVs(seed, i + offset, CacheType::Normal);
+            if (filter.compareIV(ivs) && filter.compareHiddenPower(ivs))
+            {
+                cache.emplace((i << 32) | seed, ivs);
+            }
+        }
+    }
+
+    cache.max_load_factor(0.9);
+    cache.rehash(cache.size());
+
+    return cache;
+}
+
+fph::MetaFphMap<u64, std::array<u8, 6>> IVCache::getRoamerCache(u32 initialAdvances, u32 maxAdvances, const StateFilter &filter) const
+{
+    fph::MetaFphMap<u64, std::array<u8, 6>> cache;
+
+    for (u64 i = initialAdvances; i <= (initialAdvances + maxAdvances) && i < roamerSeeds.size(); i++)
+    {
+        for (u32 seed : roamerSeeds[i])
+        {
+            auto ivs = computeIVs(seed, i, CacheType::Roamer);
+            if (filter.compareIV(ivs) && filter.compareHiddenPower(ivs))
+            {
+                cache.emplace((i << 32) | seed, ivs);
+            }
+        }
+    }
+
+    cache.max_load_factor(0.9);
+    cache.rehash(cache.size());
+
+    return cache;
+}

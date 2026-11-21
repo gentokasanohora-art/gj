@@ -1,0 +1,15 @@
+# CMake
+build*
+CMakeLists.txt.user*
+
+# VS Code
+.vscode
+
+# VS
+.vs
+CMakeSettings.json
+CppProperties.json
+out
+
+# Python cache files
+*.pyc

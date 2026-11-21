@@ -1,0 +1,189 @@
+/*
+ * This file is part of PokéFinder
+ * Copyright (C) 2017-2024 by Admiral_Fish, bumba, and EzPzStreamz
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 3
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ */
+
+#include "StaticModel4.hpp"
+#include <Core/Enum/Game.hpp>
+#include <Core/Util/Translator.hpp>
+#include <Core/Util/Utilities.hpp>
+
+StaticGeneratorModel4::StaticGeneratorModel4(QObject *parent) : TableModel(parent), dppt(true), showStats(false)
+{
+}
+
+int StaticGeneratorModel4::columnCount(const QModelIndex &parent) const
+{
+    if (dppt)
+    {
+        return 16;
+    }
+    else
+    {
+        return 17;
+    }
+}
+
+QVariant StaticGeneratorModel4::data(const QModelIndex &index, int role) const
+{
+    if (role == Qt::DisplayRole)
+    {
+        const auto &state = model[index.row()];
+        int column = getColumn(index.column());
+        switch (column)
+        {
+        case 0:
+            return state.getAdvances();
+        case 1:
+            return state.getCall() == 0 ? "E" : state.getCall() == 1 ? "K" : "P";
+        case 2:
+            return QString::fromStdString(Utilities4::getChatot(state.getChatot()));
+        case 3:
+            return QString::number(state.getPID(), 16).toUpper().rightJustified(8, '0');
+        case 4:
+        {
+            u8 shiny = state.getShiny();
+            return shiny == 2 ? tr("Square") : shiny == 1 ? tr("Star") : tr("No");
+        }
+        case 5:
+            return QString::fromStdString(Translator::getNature(state.getNature()));
+        case 6:
+            return QString("%1: %2").arg(state.getAbility()).arg(QString::fromStdString(Translator::getAbility(state.getAbilityIndex())));
+        case 7:
+        case 8:
+        case 9:
+        case 10:
+        case 11:
+        case 12:
+            return showStats ? state.getStat(column - 7) : state.getIV(column - 7);
+        case 13:
+            return QString::fromStdString(Translator::getHiddenPower(state.getHiddenPower()));
+        case 14:
+            return state.getHiddenPowerStrength();
+        case 15:
+            return QString::fromStdString(Translator::getGender(state.getGender()));
+        case 16:
+            return QString::fromStdString(Translator::getCharacteristic(state.getCharacteristic(), CharacteristicGeneration::Gen4));
+        }
+    }
+    return QVariant();
+}
+
+QVariant StaticGeneratorModel4::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    if (role == Qt::DisplayRole && orientation == Qt::Horizontal)
+    {
+        section = getColumn(section);
+        return header[section];
+    }
+    return QVariant();
+}
+
+void StaticGeneratorModel4::setGame(Game version)
+{
+    dppt = (version & Game::DPPt) != Game::None;
+    emit headerDataChanged(Qt::Horizontal, 0, columnCount());
+}
+
+void StaticGeneratorModel4::setShowStats(bool flag)
+{
+    showStats = flag;
+    emit dataChanged(index(0, getColumn(7)), index(rowCount() - 1, getColumn(12)), { Qt::DisplayRole });
+}
+
+int StaticGeneratorModel4::getColumn(int column) const
+{
+    if (dppt)
+    {
+        return column > 0 ? column + 1 : column;
+    }
+    else
+    {
+        return column;
+    }
+}
+
+StaticSearcherModel4::StaticSearcherModel4(QObject *parent) : TableModel(parent), showStats(false)
+{
+}
+
+int StaticSearcherModel4::columnCount(const QModelIndex &parent) const
+{
+    return 18;
+}
+
+QVariant StaticSearcherModel4::data(const QModelIndex &index, int role) const
+{
+    if (role == Qt::DisplayRole)
+    {
+        const auto &state = model[index.row()];
+        int column = index.column();
+        switch (column)
+        {
+        case 0:
+            return QString::number(state.getSeed(), 16).toUpper().rightJustified(8, '0');
+        case 1:
+            return state.getSeed() & 0xffff;
+        case 2:
+            return (state.getSeed() >> 16) & 0xff;
+        case 3:
+            return state.getAdvances();
+        case 4:
+            return QString::number(state.getPID(), 16).toUpper().rightJustified(8, '0');
+        case 5:
+        {
+            u8 shiny = state.getShiny();
+            return shiny == 2 ? tr("Square") : shiny == 1 ? tr("Star") : tr("No");
+        }
+        case 6:
+            return QString::fromStdString(Translator::getNature(state.getNature()));
+        case 7:
+            return QString("%1: %2").arg(state.getAbility()).arg(QString::fromStdString(Translator::getAbility(state.getAbilityIndex())));
+        case 8:
+        case 9:
+        case 10:
+        case 11:
+        case 12:
+        case 13:
+            return showStats ? state.getStat(column - 8) : state.getIV(column - 8);
+        case 14:
+            return QString::fromStdString(Translator::getHiddenPower(state.getHiddenPower()));
+        case 15:
+            return state.getHiddenPowerStrength();
+        case 16:
+            return QString::fromStdString(Translator::getGender(state.getGender()));
+        case 17:
+            return QString::fromStdString(Translator::getCharacteristic(state.getCharacteristic(), CharacteristicGeneration::Gen4));
+        }
+    }
+    return QVariant();
+}
+
+QVariant StaticSearcherModel4::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    if (role == Qt::DisplayRole && orientation == Qt::Horizontal)
+    {
+        return header[section];
+    }
+    return QVariant();
+}
+
+void StaticSearcherModel4::setShowStats(bool flag)
+{
+    showStats = flag;
+    emit dataChanged(index(0, 8), index(rowCount() - 1, 13), { Qt::DisplayRole });
+}
